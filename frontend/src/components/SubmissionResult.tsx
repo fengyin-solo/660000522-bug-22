@@ -7,6 +7,7 @@ type TestResult = NonNullable<ExecutionResult['testResults']>[number];
 interface SubmissionResultProps {
   title: string;
   type: 'run' | 'submit';
+  status?: 'pending' | 'running' | 'success' | 'failed';
   success: boolean;
   output?: string;
   error?: string;
@@ -704,6 +705,7 @@ const ComparisonCard: React.FC<{
 export const SubmissionResult: React.FC<SubmissionResultProps> = ({
   title,
   type,
+  status,
   success,
   output,
   error,
@@ -711,12 +713,23 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
   memory,
   testResults,
 }) => {
-  const { currentProblem, executionHistory } = useInterviewStore();
+  const {
+    currentProblem,
+    executionHistory,
+    currentExecutionId,
+    selectedHistoryId,
+    setSelectedHistoryId,
+  } = useInterviewStore();
   const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
   const [filter, setFilter] = useState<'all' | 'passed' | 'failed'>('all');
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
-  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [compareCount, setCompareCount] = useState<number>(5);
+
+  // 状态以传入的执行记录为准；兼容旧调用方仅传 success 的场景
+  const executionStatus: 'pending' | 'running' | 'success' | 'failed' =
+    status ?? (success ? 'success' : 'failed');
+  const isExecuting = executionStatus === 'running' || executionStatus === 'pending';
+  const headerSuccess = isExecuting ? false : executionStatus === 'success';
 
   const passedCount = testResults?.filter(t => t.passed).length || 0;
   const failedCount = testResults?.filter(t => !t.passed).length || 0;
@@ -732,10 +745,6 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
   const memoryLimit = currentProblem?.memoryLimit || 128;
   const displayRuntime = runtime;
   const displayMemory = memory;
-
-  const submitHistory = useMemo(() => {
-    return executionHistory.filter(h => h.type === 'submit').slice(0, 10);
-  }, [executionHistory]);
 
   const comparisonData = useMemo(() => {
     const items = executionHistory.slice(0, compareCount);
@@ -761,7 +770,10 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
     };
   }, [executionHistory]);
 
-  const selectedHistory = executionHistory.find(h => h.id === selectedHistoryId);
+  // 选中记录来自 store，历史页再次打开仍高亮同一条；
+  // 若该记录已不存在（如被裁剪），回退到最新记录。
+  const selectedHistory =
+    executionHistory.find(h => h.id === selectedHistoryId) || executionHistory[0] || null;
 
   return (
     <div style={{
@@ -777,24 +789,34 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '10px 16px',
-        background: success ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)',
-        borderBottom: `1px solid ${success ? 'rgba(76, 175, 80, 0.3)' : 'rgba(244, 67, 54, 0.3)'}`,
+        background: isExecuting
+          ? 'rgba(33, 150, 243, 0.1)'
+          : headerSuccess
+          ? 'rgba(76, 175, 80, 0.1)'
+          : 'rgba(244, 67, 54, 0.1)',
+        borderBottom: `1px solid ${isExecuting
+          ? 'rgba(33, 150, 243, 0.3)'
+          : headerSuccess
+          ? 'rgba(76, 175, 80, 0.3)'
+          : 'rgba(244, 67, 54, 0.3)'}`,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{
             width: '24px',
             height: '24px',
             borderRadius: '50%',
-            background: getStatusBg(success),
-            border: `2px solid ${getStatusColor(success)}`,
+            background: isExecuting
+              ? 'rgba(33, 150, 243, 0.1)'
+              : getStatusBg(headerSuccess),
+            border: `2px solid ${isExecuting ? '#2196f3' : getStatusColor(headerSuccess)}`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: '14px',
-            color: getStatusColor(success),
+            color: isExecuting ? '#2196f3' : getStatusColor(headerSuccess),
             fontWeight: 'bold',
           }}>
-            {success ? '✓' : '✗'}
+            {isExecuting ? '⏳' : headerSuccess ? '✓' : '✗'}
           </div>
           <div>
             <span style={{
@@ -804,16 +826,24 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
             }}>
               {title}
             </span>
-            {testResults && (
-              <span style={{
-                marginLeft: '8px',
-                fontSize: '12px',
-                color: success ? '#4caf50' : '#f44336',
-                fontWeight: 600,
-              }}>
-                {success ? '全部通过' : `${passedCount}/${totalCount} 通过`}
-              </span>
-            )}
+            <span style={{
+              marginLeft: '8px',
+              fontSize: '12px',
+              color: isExecuting
+                ? '#2196f3'
+                : headerSuccess
+                ? '#4caf50'
+                : '#f44336',
+              fontWeight: 600,
+            }}>
+              {isExecuting
+                ? '执行中...'
+                : !testResults
+                ? (headerSuccess ? '执行完成' : '执行失败')
+                : headerSuccess
+                ? '全部通过'
+                : `${passedCount}/${totalCount} 通过`}
+            </span>
           </div>
         </div>
 
@@ -838,7 +868,7 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
               }}
             >
               {label}
-              {key === 'history' && submitHistory.length > 0 && (
+              {key === 'history' && executionHistory.length > 0 && (
                 <span style={{
                   marginLeft: '4px',
                   fontSize: '10px',
@@ -847,14 +877,14 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
                   padding: '1px 5px',
                   borderRadius: '8px',
                 }}>
-                  {submitHistory.length}
+                  {executionHistory.length}
                 </span>
               )}
             </button>
           ))}
         </div>
 
-        {type === 'submit' && testResults && activeTab === 'current' && (
+        {type === 'submit' && testResults && activeTab === 'current' && !isExecuting && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: '200px' }}>
               <ProgressBar
@@ -1003,7 +1033,32 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
       }}>
         {activeTab === 'current' && (
           <>
-            {error && (
+            {isExecuting && (
+              <div style={{
+                padding: '16px',
+                background: 'rgba(33, 150, 243, 0.08)',
+                border: '1px solid rgba(33, 150, 243, 0.3)',
+                borderRadius: '6px',
+                marginBottom: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}>
+                <span style={{ fontSize: '18px', animation: 'spin-pulse 1.5s ease-in-out infinite', display: 'inline-block' }}>
+                  ⏳
+                </span>
+                <div>
+                  <div style={{ color: '#64b5f6', fontSize: '13px', fontWeight: 600 }}>
+                    {type === 'submit' ? '正在提交代码...' : '正在运行代码...'}
+                  </div>
+                  <div style={{ color: '#888', fontSize: '11px', marginTop: '2px' }}>
+                    请稍候，完成后此处将显示通过或失败结果
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {error && !isExecuting && (
               <div style={{
                 padding: '12px',
                 background: 'rgba(244, 67, 54, 0.1)',
@@ -1023,7 +1078,7 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
               </div>
             )}
 
-            {output && !testResults && (
+            {output && !testResults && !isExecuting && (
               <div style={{
                 padding: '12px',
                 background: '#2d2d2d',
@@ -1037,6 +1092,20 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
                 }}>{output}</pre>
+              </div>
+            )}
+
+            {!testResults && !isExecuting && !error && !output && (
+              <div style={{
+                textAlign: 'center',
+                padding: '40px 20px',
+                color: headerSuccess ? '#4caf50' : '#f44336',
+                fontSize: '13px',
+                fontWeight: 600,
+              }}>
+                {headerSuccess
+                  ? (type === 'submit' ? '✓ 提交完成（未产生测试结果）' : '✓ 运行完成（未产生测试结果）')
+                  : (type === 'submit' ? '✗ 提交失败（未产生测试结果）' : '✗ 运行失败（未产生测试结果）')}
               </div>
             )}
 
@@ -1094,13 +1163,13 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
                 flex: 1,
               }}>
                 {executionHistory.length > 0 ? (
-                  executionHistory.map((item, idx) => (
+                  executionHistory.map((item) => (
                     <HistoryTimelineItem
                       key={item.id}
                       item={item}
-                      isSelected={selectedHistoryId === item.id}
-                      isLatest={idx === 0}
-                      onClick={() => setSelectedHistoryId(selectedHistoryId === item.id ? null : item.id)}
+                      isSelected={selectedHistory?.id === item.id}
+                      isLatest={currentExecutionId === item.id}
+                      onClick={() => setSelectedHistoryId(item.id)}
                     />
                   ))
                 ) : (
@@ -1204,13 +1273,13 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
                     overflowX: 'auto',
                     paddingBottom: '8px',
                   }}>
-                    {comparisonData.items.map((item, idx) => (
+                    {comparisonData.items.map((item) => (
                       <ComparisonCard
                         key={item.id}
                         item={item}
                         timeLimit={timeLimit}
                         memoryLimit={memoryLimit}
-                        isLatest={idx === 0}
+                        isLatest={currentExecutionId === item.id}
                         bestRuntime={comparisonData.bestRuntime}
                         bestMemory={comparisonData.bestMemory}
                         bestPassRate={comparisonData.bestPassRate}
@@ -1227,9 +1296,62 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
                     color: '#888',
                     fontWeight: 500,
                     marginBottom: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    flexWrap: 'wrap',
                   }}>
-                    🔍 选中记录详情 - {formatTime(selectedHistory.timestamp)}
+                    <span>
+                      🔍 选中记录详情 - {formatTime(selectedHistory.timestamp)}
+                    </span>
+                    <span style={{
+                      fontSize: '10px',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: selectedHistory.type === 'submit' ? 'rgba(33, 150, 243, 0.2)' : 'rgba(156, 39, 176, 0.2)',
+                      color: selectedHistory.type === 'submit' ? '#64b5f6' : '#ba68c8',
+                      fontWeight: 700,
+                    }}>
+                      {selectedHistory.type === 'submit' ? '提交' : '运行'}
+                    </span>
+                    <span style={{
+                      fontSize: '10px',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      background: STATUS_CONFIG[selectedHistory.status].bg,
+                      color: STATUS_CONFIG[selectedHistory.status].color,
+                      fontWeight: 600,
+                      border: `1px solid ${STATUS_CONFIG[selectedHistory.status].border}`,
+                    }}>
+                      {STATUS_CONFIG[selectedHistory.status].label}
+                    </span>
+                    <span style={{ fontSize: '10px', color: '#888', fontFamily: 'monospace', textTransform: 'uppercase' }}>
+                      {selectedHistory.language}
+                    </span>
+                    {selectedHistory.totalCount > 0 && (
+                      <span style={{ fontSize: '11px', color: '#bbb', fontFamily: 'monospace' }}>
+                        {selectedHistory.passedCount}/{selectedHistory.totalCount} 用例
+                      </span>
+                    )}
                   </div>
+                  {selectedHistory.code && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px', fontWeight: 500 }}>提交时代码</div>
+                      <pre style={{
+                        margin: 0,
+                        padding: '10px',
+                        background: '#2d2d2d',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        color: '#bbb',
+                        fontFamily: 'monospace',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        maxHeight: '240px',
+                        overflow: 'auto',
+                      }}>{selectedHistory.code}</pre>
+                    </div>
+                  )}
                   {selectedHistory.result.testResults ? (
                     <div>
                       {selectedHistory.result.testResults.map((result, idx) => (

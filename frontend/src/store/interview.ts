@@ -16,12 +16,15 @@ export interface ExecutionHistoryItem {
   result: ExecutionResult;
   timestamp: string;
   language: string;
+  code?: string;
   passedCount: number;
   totalCount: number;
   runtime?: number;
   memory?: number;
   status: 'pending' | 'running' | 'success' | 'failed';
 }
+
+const MAX_HISTORY_SIZE = 50;
 
 export interface StatusChangeNotification {
   id: string;
@@ -41,9 +44,9 @@ interface InterviewState {
   language: string;
   isRunning: boolean;
   isSubmitting: boolean;
-  lastRunResult: ExecutionResult | null;
-  lastSubmissionResult: ExecutionResult | null;
   executionHistory: ExecutionHistoryItem[];
+  currentExecutionId: string | null;
+  selectedHistoryId: string | null;
   currentUser: User | null;
   myRooms: InterviewRoom[];
   currentRoom: InterviewRoom | null;
@@ -56,9 +59,10 @@ interface InterviewState {
   setLanguage: (lang: string) => void;
   setIsRunning: (running: boolean) => void;
   setIsSubmitting: (submitting: boolean) => void;
-  setLastRunResult: (result: ExecutionResult | null) => void;
-  setLastSubmissionResult: (result: ExecutionResult | null) => void;
   addExecutionHistory: (item: ExecutionHistoryItem) => void;
+  updateExecutionHistory: (id: string, updates: Partial<ExecutionHistoryItem>) => void;
+  setCurrentExecutionId: (id: string | null) => void;
+  setSelectedHistoryId: (id: string | null) => void;
   clearExecutionHistory: () => void;
   resetOriginalCode: () => void;
   addSubmission: (s: Submission) => void;
@@ -78,37 +82,38 @@ interface InterviewState {
   addProblem: (problem: Problem) => void;
   updateProblem: (problem: Problem) => void;
   removeProblem: (problemId: string) => void;
-  updateExecutionHistory: (id: string, updates: Partial<ExecutionHistoryItem>) => void;
 }
 
 export const useInterviewStore = create<InterviewState>((set) => ({
   problems: [], currentProblem: null, submissions: [], deprecatedRoom: null, room: null,
   code: getDefaultCodeByLanguage('javascript'), originalCode: getDefaultCodeByLanguage('javascript'), language: 'javascript',
-  isRunning: false, isSubmitting: false, lastRunResult: null, lastSubmissionResult: null,
-  executionHistory: [],
+  isRunning: false, isSubmitting: false,
+  executionHistory: [], currentExecutionId: null, selectedHistoryId: null,
   currentUser: null, myRooms: [], currentRoom: null, invitations: [], participants: [], isConnected: false,
   statusChangeNotification: null,
   setProblem: (p) => set({ currentProblem: p }),
   setCode: (code) => set({ code }),
   setLanguage: (lang) => {
     const defaultCode = getDefaultCodeByLanguage(lang);
+    // 切换语言会重置代码模板，旧记录的代码已不再对应编辑器内容，
+    // 因此只清空“当前结果”指针；历史记录保留以便追溯，可在历史对比页查看。
     set({
       language: lang,
       code: defaultCode,
       originalCode: defaultCode,
-      lastRunResult: null,
-      lastSubmissionResult: null,
-      executionHistory: [],
+      currentExecutionId: null,
     });
   },
   setIsRunning: (running) => set({ isRunning: running }),
   setIsSubmitting: (submitting) => set({ isSubmitting: submitting }),
-  setLastRunResult: (result) => set({ lastRunResult: result }),
-  setLastSubmissionResult: (result) => set({ lastSubmissionResult: result }),
   addExecutionHistory: (item) => set((state) => ({
-    executionHistory: [item, ...state.executionHistory].slice(0, 20),
+    executionHistory: [item, ...state.executionHistory].slice(0, MAX_HISTORY_SIZE),
+    currentExecutionId: item.id,
+    selectedHistoryId: item.id,
   })),
-  clearExecutionHistory: () => set({ executionHistory: [] }),
+  setCurrentExecutionId: (id) => set({ currentExecutionId: id }),
+  setSelectedHistoryId: (id) => set({ selectedHistoryId: id }),
+  clearExecutionHistory: () => set({ executionHistory: [], currentExecutionId: null, selectedHistoryId: null }),
   resetOriginalCode: () => set({ originalCode: useInterviewStore.getState().code }),
   addSubmission: (s) => set({ submissions: [s, ...useInterviewStore.getState().submissions] }),
   setRoom: (room) => set({ deprecatedRoom: room, room, currentRoom: room }),
@@ -158,8 +163,10 @@ export const useInterviewStore = create<InterviewState>((set) => ({
     currentProblem: null,
     invitations: [], participants: [], isConnected: false,
     executionHistory: [],
-    lastRunResult: null,
-    lastSubmissionResult: null,
+    currentExecutionId: null,
+    selectedHistoryId: null,
+    isRunning: false,
+    isSubmitting: false,
     statusChangeNotification: null,
   }),
   setProblems: (problems) => set({ problems }),
