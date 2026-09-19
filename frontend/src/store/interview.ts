@@ -41,9 +41,9 @@ interface InterviewState {
   language: string;
   isRunning: boolean;
   isSubmitting: boolean;
-  lastRunResult: ExecutionResult | null;
-  lastSubmissionResult: ExecutionResult | null;
   executionHistory: ExecutionHistoryItem[];
+  activeHistoryId: string | null;
+  selectedHistoryId: string | null;
   currentUser: User | null;
   myRooms: InterviewRoom[];
   currentRoom: InterviewRoom | null;
@@ -56,8 +56,8 @@ interface InterviewState {
   setLanguage: (lang: string) => void;
   setIsRunning: (running: boolean) => void;
   setIsSubmitting: (submitting: boolean) => void;
-  setLastRunResult: (result: ExecutionResult | null) => void;
-  setLastSubmissionResult: (result: ExecutionResult | null) => void;
+  setActiveHistoryId: (id: string | null) => void;
+  setSelectedHistoryId: (id: string | null) => void;
   addExecutionHistory: (item: ExecutionHistoryItem) => void;
   clearExecutionHistory: () => void;
   resetOriginalCode: () => void;
@@ -84,31 +84,39 @@ interface InterviewState {
 export const useInterviewStore = create<InterviewState>((set) => ({
   problems: [], currentProblem: null, submissions: [], deprecatedRoom: null, room: null,
   code: getDefaultCodeByLanguage('javascript'), originalCode: getDefaultCodeByLanguage('javascript'), language: 'javascript',
-  isRunning: false, isSubmitting: false, lastRunResult: null, lastSubmissionResult: null,
+  isRunning: false, isSubmitting: false,
   executionHistory: [],
+  activeHistoryId: null,
+  selectedHistoryId: null,
   currentUser: null, myRooms: [], currentRoom: null, invitations: [], participants: [], isConnected: false,
   statusChangeNotification: null,
   setProblem: (p) => set({ currentProblem: p }),
   setCode: (code) => set({ code }),
   setLanguage: (lang) => {
     const defaultCode = getDefaultCodeByLanguage(lang);
+    // 历史记录保留（含 language 标记），保证可追溯；只清当前结果，避免残留上一种语言的旧内容
     set({
       language: lang,
       code: defaultCode,
       originalCode: defaultCode,
-      lastRunResult: null,
-      lastSubmissionResult: null,
-      executionHistory: [],
+      activeHistoryId: null,
+      selectedHistoryId: null,
     });
   },
   setIsRunning: (running) => set({ isRunning: running }),
   setIsSubmitting: (submitting) => set({ isSubmitting: submitting }),
-  setLastRunResult: (result) => set({ lastRunResult: result }),
-  setLastSubmissionResult: (result) => set({ lastSubmissionResult: result }),
+  setActiveHistoryId: (id) => set({ activeHistoryId: id }),
+  setSelectedHistoryId: (id) => set({ selectedHistoryId: id }),
   addExecutionHistory: (item) => set((state) => ({
-    executionHistory: [item, ...state.executionHistory].slice(0, 20),
+    executionHistory: [item, ...state.executionHistory].slice(0, 50),
+    activeHistoryId: item.id,
+    selectedHistoryId: null,
   })),
-  clearExecutionHistory: () => set({ executionHistory: [] }),
+  clearExecutionHistory: () => set({
+    executionHistory: [],
+    activeHistoryId: null,
+    selectedHistoryId: null,
+  }),
   resetOriginalCode: () => set({ originalCode: useInterviewStore.getState().code }),
   addSubmission: (s) => set({ submissions: [s, ...useInterviewStore.getState().submissions] }),
   setRoom: (room) => set({ deprecatedRoom: room, room, currentRoom: room }),
@@ -158,8 +166,8 @@ export const useInterviewStore = create<InterviewState>((set) => ({
     currentProblem: null,
     invitations: [], participants: [], isConnected: false,
     executionHistory: [],
-    lastRunResult: null,
-    lastSubmissionResult: null,
+    activeHistoryId: null,
+    selectedHistoryId: null,
     statusChangeNotification: null,
   }),
   setProblems: (problems) => set({ problems }),

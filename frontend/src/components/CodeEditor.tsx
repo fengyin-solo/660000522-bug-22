@@ -29,14 +29,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     isSubmitting,
     setIsRunning,
     setIsSubmitting,
-    setLastRunResult,
-    setLastSubmissionResult,
     addExecutionHistory,
     updateExecutionHistory,
     currentProblem,
-    lastRunResult,
-    lastSubmissionResult,
     executionHistory,
+    activeHistoryId,
   } = useInterviewStore();
 
   const [languageConfirmOpen, setLanguageConfirmOpen] = useState(false);
@@ -77,27 +74,32 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     }
   }, [code, originalCode]);
 
-  const latestSubmission = useMemo(() => {
-    return executionHistory.find(h => h.type === 'submit') || executionHistory[0];
-  }, [executionHistory]);
+  // 顶部状态栏始终与「最近一次执行记录」对齐，运行/提交共用同一数据源
+  const latestRecord = useMemo(() => executionHistory[0] ?? null, [executionHistory]);
+
+  const activeResult = useMemo(
+    () => executionHistory.find(h => h.id === activeHistoryId) ?? null,
+    [executionHistory, activeHistoryId],
+  );
 
   const submissionStatus = useMemo(() => {
-    if (!latestSubmission) return null;
-    const passRate = latestSubmission.totalCount > 0
-      ? (latestSubmission.passedCount / latestSubmission.totalCount) * 100
-      : 0;
-    const isSuccess = latestSubmission.passedCount === latestSubmission.totalCount && latestSubmission.totalCount > 0;
+    if (!latestRecord) return null;
+    const isPending = latestRecord.status === 'running' || latestRecord.status === 'pending';
+    const isSuccess = latestRecord.status === 'success';
+    const isFailed = latestRecord.status === 'failed';
     return {
+      isPending,
       isSuccess,
-      passRate,
-      passedCount: latestSubmission.passedCount,
-      totalCount: latestSubmission.totalCount,
-      runtime: latestSubmission.runtime,
-      memory: latestSubmission.memory,
-      timestamp: latestSubmission.timestamp,
-      type: latestSubmission.type,
+      isFailed,
+      status: latestRecord.status,
+      passedCount: latestRecord.passedCount,
+      totalCount: latestRecord.totalCount,
+      runtime: latestRecord.runtime,
+      memory: latestRecord.memory,
+      timestamp: latestRecord.timestamp,
+      type: latestRecord.type,
     };
-  }, [latestSubmission]);
+  }, [latestRecord]);
 
   useEffect(() => {
     if (statusMessage) {
@@ -113,6 +115,10 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   const handleLanguageSelect = useCallback((newLang: string) => {
     setShowLanguageDropdown(false);
     if (newLang === language) return;
+    if (isRunning || isSubmitting) {
+      showStatus('error', '代码正在执行，请等待完成后再切换语言');
+      return;
+    }
 
     if (codeModified && code.trim() !== '') {
       setPendingLanguage(newLang);
@@ -121,7 +127,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       setLanguage(newLang);
       showStatus('info', `已切换到 ${LANGUAGE_CONFIGS.find(l => l.value === newLang)?.label || newLang}`);
     }
-  }, [language, codeModified, code, setLanguage, showStatus]);
+  }, [language, codeModified, code, setLanguage, showStatus, isRunning, isSubmitting]);
 
   const confirmLanguageChange = useCallback(() => {
     if (pendingLanguage) {
@@ -154,7 +160,6 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     const pendingResult: ExecutionResult = { success: false, output: '代码运行中...' };
 
     setIsRunning(true);
-    setLastRunResult(null);
     showStatus('info', '正在运行代码...');
 
     addExecutionHistory({
@@ -177,10 +182,9 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         result = { success: true, output: '// 模拟运行结果\nHello, World!' };
       }
 
-      setLastRunResult(result);
-
       const passedCount = result.testResults?.filter(t => t.passed).length || 0;
       const totalCount = result.testResults?.length || 0;
+      // 统一判定：执行成功即完成；全部用例通过（或无测试用例）为成功，否则失败
       const isSuccess = result.success && (totalCount === 0 || passedCount === totalCount);
 
       updateExecutionHistory(historyId, {
@@ -192,14 +196,13 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         status: isSuccess ? 'success' : 'failed',
       });
 
-      if (result.success) {
+      if (isSuccess) {
         showStatus('success', '运行成功 ✓');
       } else {
         showStatus('error', result.error || '运行失败 ✗');
       }
     } catch (error) {
       const errorResult = { success: false, error: error instanceof Error ? error.message : '运行出错' };
-      setLastRunResult(errorResult);
       updateExecutionHistory(historyId, {
         result: errorResult,
         status: 'failed',
@@ -208,7 +211,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     } finally {
       setIsRunning(false);
     }
-  }, [disabled, isRunning, isSubmitting, onRun, setIsRunning, setLastRunResult, addExecutionHistory, updateExecutionHistory, language, showStatus]);
+  }, [disabled, isRunning, isSubmitting, onRun, setIsRunning, addExecutionHistory, updateExecutionHistory, language, showStatus]);
 
   const handleSubmit = useCallback(async () => {
     if (disabled || isRunning || isSubmitting) return;
@@ -221,7 +224,6 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     const pendingResult: ExecutionResult = { success: false, output: '代码提交中...' };
 
     setIsSubmitting(true);
-    setLastSubmissionResult(null);
     showStatus('info', '正在提交代码...');
 
     addExecutionHistory({
@@ -256,10 +258,9 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         };
       }
 
-      setLastSubmissionResult(result);
-
       const passedCount = result.testResults?.filter(t => t.passed).length || 0;
       const totalCount = result.testResults?.length || 0;
+      // 提交要求全部用例通过（无测试结果视为失败），完成后明确落为 success/failed
       const isSuccess = result.success && passedCount === totalCount && totalCount > 0;
 
       updateExecutionHistory(historyId, {
@@ -271,14 +272,13 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         status: isSuccess ? 'success' : 'failed',
       });
 
-      if (result.success) {
+      if (isSuccess) {
         showStatus('success', '提交成功 ✓ 所有测试用例通过');
       } else {
         showStatus('error', '提交失败 ✗ 存在未通过的测试用例');
       }
     } catch (error) {
       const errorResult = { success: false, error: error instanceof Error ? error.message : '提交出错' };
-      setLastSubmissionResult(errorResult);
       updateExecutionHistory(historyId, {
         result: errorResult,
         status: 'failed',
@@ -287,7 +287,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
     } finally {
       setIsSubmitting(false);
     }
-  }, [disabled, isRunning, isSubmitting, onSubmit, currentProblem, setIsSubmitting, setLastSubmissionResult, addExecutionHistory, updateExecutionHistory, language, showStatus]);
+  }, [disabled, isRunning, isSubmitting, onSubmit, currentProblem, setIsSubmitting, addExecutionHistory, updateExecutionHistory, language, showStatus]);
 
   const buttonBaseStyle: React.CSSProperties = {
     padding: '6px 18px',
@@ -528,9 +528,28 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       );
     }
 
-    const statusColor = submissionStatus.isSuccess ? '#4caf50' : '#ff9800';
-    const statusBg = submissionStatus.isSuccess ? 'rgba(76, 175, 80, 0.1)' : 'rgba(255, 152, 0, 0.1)';
-    const statusBorder = submissionStatus.isSuccess ? 'rgba(76, 175, 80, 0.3)' : 'rgba(255, 152, 0, 0.3)';
+    const typeLabel = submissionStatus.type === 'submit' ? '提交' : '运行';
+    const stateColor = submissionStatus.isPending
+      ? '#2196f3'
+      : submissionStatus.isSuccess
+      ? '#4caf50'
+      : '#f44336';
+    const stateBg = submissionStatus.isPending
+      ? 'rgba(33, 150, 243, 0.1)'
+      : submissionStatus.isSuccess
+      ? 'rgba(76, 175, 80, 0.1)'
+      : 'rgba(244, 67, 54, 0.1)';
+    const stateBorder = submissionStatus.isPending
+      ? 'rgba(33, 150, 243, 0.3)'
+      : submissionStatus.isSuccess
+      ? 'rgba(76, 175, 80, 0.3)'
+      : 'rgba(244, 67, 54, 0.3)';
+    const stateLabel = submissionStatus.isPending
+      ? '进行中'
+      : submissionStatus.isSuccess
+      ? '通过'
+      : '失败';
+    const stateIcon = submissionStatus.isPending ? '⏳' : submissionStatus.isSuccess ? '✅' : '❌';
 
     return (
       <div style={{
@@ -538,8 +557,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         alignItems: 'center',
         gap: '10px',
         padding: '6px 12px',
-        background: statusBg,
-        border: `1px solid ${statusBorder}`,
+        background: stateBg,
+        border: `1px solid ${stateBorder}`,
         borderRadius: '6px',
         transition: 'all 0.3s ease',
       }}>
@@ -548,51 +567,78 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           alignItems: 'center',
           gap: '4px',
         }}>
-          <span style={{ fontSize: '14px' }}>{submissionStatus.isSuccess ? '✅' : '⏳'}</span>
+          <span style={{ fontSize: '14px' }}>{stateIcon}</span>
           <span style={{
-            color: statusColor,
+            color: stateColor,
             fontSize: '11px',
             fontWeight: 600,
           }}>
-            {submissionStatus.type === 'submit' ? '提交' : '运行'}
-            {submissionStatus.isSuccess ? '通过' : '进行中'}
+            {typeLabel}{stateLabel}
           </span>
         </div>
 
         <div style={{ width: '1px', height: '14px', background: '#444' }} />
 
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontSize: '10px',
-          fontFamily: 'monospace',
-        }}>
-          <span style={{
-            color: submissionStatus.isSuccess ? '#4caf50' : '#ff9800',
-            fontWeight: 700,
-            fontSize: '11px',
+        {submissionStatus.totalCount > 0 && (
+          <>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '10px',
+              fontFamily: 'monospace',
+            }}>
+              <span style={{
+                color: stateColor,
+                fontWeight: 700,
+                fontSize: '11px',
+              }}>
+                {submissionStatus.isPending
+                  ? '---'
+                  : `${submissionStatus.passedCount}/${submissionStatus.totalCount}`}
+              </span>
+              <span style={{ color: '#666' }}>用例</span>
+            </div>
+
+            <div style={{ width: '1px', height: '14px', background: '#444' }} />
+          </>
+        )}
+
+        {!submissionStatus.isPending &&
+          (submissionStatus.runtime !== undefined || submissionStatus.memory !== undefined) && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '10px',
+            fontFamily: 'monospace',
           }}>
-            {submissionStatus.passedCount}/{submissionStatus.totalCount || '-'}
-          </span>
-          <span style={{ color: '#666' }}>用例</span>
-          {submissionStatus.runtime !== undefined && (
-            <>
-              <span style={{ width: '4px', height: '4px', background: '#444', borderRadius: '50%' }} />
+            {submissionStatus.runtime !== undefined && (
               <span style={{ color: '#2196f3', fontWeight: 600 }}>
                 {submissionStatus.runtime}ms
               </span>
-            </>
-          )}
-          {submissionStatus.memory !== undefined && (
-            <>
+            )}
+            {submissionStatus.runtime !== undefined && submissionStatus.memory !== undefined && (
               <span style={{ width: '4px', height: '4px', background: '#444', borderRadius: '50%' }} />
+            )}
+            {submissionStatus.memory !== undefined && (
               <span style={{ color: '#9c27b0', fontWeight: 600 }}>
                 {submissionStatus.memory}MB
               </span>
-            </>
-          )}
-        </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ width: '1px', height: '14px', background: '#444' }} />
+
+        <span style={{
+          color: langConfig.color,
+          fontSize: '10px',
+          fontWeight: 600,
+          fontFamily: 'monospace',
+        }}>
+          {latestRecord?.language.toUpperCase()}
+        </span>
 
         <div style={{ width: '1px', height: '14px', background: '#444' }} />
 
@@ -791,7 +837,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       )}
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ flex: lastRunResult || lastSubmissionResult ? '0 0 60%' : '1', overflow: 'hidden', minHeight: '200px' }}>
+        <div style={{ flex: activeResult ? '0 0 60%' : '1', overflow: 'hidden', minHeight: '200px' }}>
           <Editor
             height="100%"
             language={language}
@@ -808,32 +854,18 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
           />
         </div>
 
-        {lastSubmissionResult && (
+        {activeResult && (
           <div style={{ flex: '0 0 40%', minHeight: '200px', display: 'flex', flexDirection: 'column' }}>
             <SubmissionResult
-              title="提交结果"
-              type="submit"
-              success={lastSubmissionResult.success}
-              output={lastSubmissionResult.output}
-              error={lastSubmissionResult.error}
-              runtime={lastSubmissionResult.runtime}
-              memory={lastSubmissionResult.memory}
-              testResults={lastSubmissionResult.testResults}
-            />
-          </div>
-        )}
-
-        {!lastSubmissionResult && lastRunResult && (
-          <div style={{ flex: '0 0 40%', minHeight: '200px', display: 'flex', flexDirection: 'column' }}>
-            <SubmissionResult
-              title="运行结果"
-              type="run"
-              success={lastRunResult.success}
-              output={lastRunResult.output}
-              error={lastRunResult.error}
-              runtime={lastRunResult.runtime}
-              memory={lastRunResult.memory}
-              testResults={lastRunResult.testResults}
+              title={activeResult.type === 'submit' ? '提交结果' : '运行结果'}
+              type={activeResult.type}
+              status={activeResult.status}
+              success={activeResult.result.success}
+              output={activeResult.result.output}
+              error={activeResult.result.error}
+              runtime={activeResult.result.runtime}
+              memory={activeResult.result.memory}
+              testResults={activeResult.result.testResults}
             />
           </div>
         )}

@@ -3,10 +3,12 @@ import { useInterviewStore, ExecutionHistoryItem } from '../store/interview';
 import { ExecutionResult } from '../store/interview';
 
 type TestResult = NonNullable<ExecutionResult['testResults']>[number];
+type ExecutionStatus = ExecutionHistoryItem['status'];
 
 interface SubmissionResultProps {
   title: string;
   type: 'run' | 'submit';
+  status?: ExecutionStatus;
   success: boolean;
   output?: string;
   error?: string;
@@ -704,6 +706,7 @@ const ComparisonCard: React.FC<{
 export const SubmissionResult: React.FC<SubmissionResultProps> = ({
   title,
   type,
+  status,
   success,
   output,
   error,
@@ -711,12 +714,14 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
   memory,
   testResults,
 }) => {
-  const { currentProblem, executionHistory } = useInterviewStore();
+  const { currentProblem, executionHistory, selectedHistoryId, setSelectedHistoryId } = useInterviewStore();
   const [expandedIndex, setExpandedIndex] = useState<number | null>(0);
   const [filter, setFilter] = useState<'all' | 'passed' | 'failed'>('all');
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
-  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const [compareCount, setCompareCount] = useState<number>(5);
+
+  const isRunning = status === 'running' || status === 'pending';
+  const headerColor = isRunning ? '#2196f3' : success ? '#4caf50' : '#f44336';
 
   const passedCount = testResults?.filter(t => t.passed).length || 0;
   const failedCount = testResults?.filter(t => !t.passed).length || 0;
@@ -732,10 +737,6 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
   const memoryLimit = currentProblem?.memoryLimit || 128;
   const displayRuntime = runtime;
   const displayMemory = memory;
-
-  const submitHistory = useMemo(() => {
-    return executionHistory.filter(h => h.type === 'submit').slice(0, 10);
-  }, [executionHistory]);
 
   const comparisonData = useMemo(() => {
     const items = executionHistory.slice(0, compareCount);
@@ -777,24 +778,24 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '10px 16px',
-        background: success ? 'rgba(76, 175, 80, 0.1)' : 'rgba(244, 67, 54, 0.1)',
-        borderBottom: `1px solid ${success ? 'rgba(76, 175, 80, 0.3)' : 'rgba(244, 67, 54, 0.3)'}`,
+        background: `${headerColor}1a`,
+        borderBottom: `1px solid ${headerColor}4d`,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{
             width: '24px',
             height: '24px',
             borderRadius: '50%',
-            background: getStatusBg(success),
-            border: `2px solid ${getStatusColor(success)}`,
+            background: `${headerColor}1a`,
+            border: `2px solid ${headerColor}`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: '14px',
-            color: getStatusColor(success),
+            color: headerColor,
             fontWeight: 'bold',
           }}>
-            {success ? '✓' : '✗'}
+            {isRunning ? '⏳' : success ? '✓' : '✗'}
           </div>
           <div>
             <span style={{
@@ -804,16 +805,18 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
             }}>
               {title}
             </span>
-            {testResults && (
-              <span style={{
-                marginLeft: '8px',
-                fontSize: '12px',
-                color: success ? '#4caf50' : '#f44336',
-                fontWeight: 600,
-              }}>
-                {success ? '全部通过' : `${passedCount}/${totalCount} 通过`}
-              </span>
-            )}
+            <span style={{
+              marginLeft: '8px',
+              fontSize: '12px',
+              color: headerColor,
+              fontWeight: 600,
+            }}>
+              {isRunning
+                ? (type === 'submit' ? '提交中...' : '运行中...')
+                : testResults
+                ? (success ? '全部通过' : `${passedCount}/${totalCount} 通过`)
+                : (success ? '执行成功' : '执行失败')}
+            </span>
           </div>
         </div>
 
@@ -838,7 +841,7 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
               }}
             >
               {label}
-              {key === 'history' && submitHistory.length > 0 && (
+              {key === 'history' && executionHistory.length > 0 && (
                 <span style={{
                   marginLeft: '4px',
                   fontSize: '10px',
@@ -847,7 +850,7 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
                   padding: '1px 5px',
                   borderRadius: '8px',
                 }}>
-                  {submitHistory.length}
+                  {executionHistory.length}
                 </span>
               )}
             </button>
@@ -1003,7 +1006,34 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
       }}>
         {activeTab === 'current' && (
           <>
-            {error && (
+            {isRunning && (
+              <div style={{
+                padding: '16px',
+                background: 'rgba(33, 150, 243, 0.08)',
+                border: '1px solid rgba(33, 150, 243, 0.3)',
+                borderRadius: '6px',
+                marginBottom: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}>
+                <span style={{
+                  display: 'inline-block',
+                  width: '16px',
+                  height: '16px',
+                  border: '2px solid transparent',
+                  borderTop: '2px solid #2196f3',
+                  borderRight: '2px solid #2196f3',
+                  borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite',
+                }} />
+                <span style={{ color: '#64b5f6', fontSize: '13px', fontWeight: 500 }}>
+                  {type === 'submit' ? '代码提交中，请稍候...' : '代码运行中，请稍候...'}
+                </span>
+              </div>
+            )}
+
+            {!isRunning && error && (
               <div style={{
                 padding: '12px',
                 background: 'rgba(244, 67, 54, 0.1)',
@@ -1023,7 +1053,7 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
               </div>
             )}
 
-            {output && !testResults && (
+            {output && !testResults && !isRunning && (
               <div style={{
                 padding: '12px',
                 background: '#2d2d2d',
@@ -1295,6 +1325,10 @@ export const SubmissionResult: React.FC<SubmissionResultProps> = ({
       </div>
 
       <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
         @keyframes pulse-border {
           0%, 100% {
             box-shadow: 0 0 0 0 rgba(33, 150, 243, 0.3);
